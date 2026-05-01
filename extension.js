@@ -2,12 +2,25 @@ const fetch = require('isomorphic-fetch');
 const { v4: uuid } = require('uuid');
 
 module.exports = nodecg => {
-  async function fetchTrackerData(baseURL, type, eventID) {
+  async function fetchFromTracker(baseURL, type, eventId) {
     const normalizedBaseURL = baseURL.endsWith('/') ? baseURL.substr(0, baseURL.length - 1) : baseURL;
 
-    const response = await fetch(`${normalizedBaseURL}/search?type=${type}&event=${eventID}`);
+    const request = await fetch(`${normalizedBaseURL}/api/v2/events/${eventId}/${type}.json`);
+    
+    try {
+      const response = await request.json();
 
-    return await response.json();
+      if (request.status !== 200) throw new Error(`Error response from tracker: ${request.status} (${request.statusText}).`);
+    
+      if (response.next) return [...response.results, ...(await fetchFromTracker(response.next))];
+    
+      return response.results;
+    } catch (e) {
+      console.error(`Failed to fetch from ${path}:`);
+      console.error(e);
+
+      return [];
+    }
   }
 
   function durationToSeconds(value) {
@@ -43,40 +56,41 @@ module.exports = nodecg => {
 
     try {
       const [runners, runs] = await Promise.all([
-        fetchTrackerData(trackerURL, 'runner', eventID),
-        fetchTrackerData(trackerURL, 'run', eventID),
+        fetchFromTracker(trackerURL, 'talent', eventID),
+        fetchFromTracker(trackerURL, 'runs', eventID),
       ]);
 
       runDataArray.value = runs
-        .filter(({ fields }) => fields.order !== null && fields.order !== undefined)
+        .filter(({ order }) => order !== null && order !== undefined)
         .map(run => {
-          const matchesExistingRun = runDataArray.value.find(oldRun => oldRun.externalID === run.pk.toString());
+          const matchesExistingRun = runDataArray.value.find(oldRun => oldRun.externalID === run.id.toString());
 
           const runData = {
             teams: [],
             id: (matchesExistingRun ? matchesExistingRun.id : null) || uuid(),
-            externalID: run.pk.toString(),
+            externalID: run.id.toString(),
             customData: {},
           };
 
-          runData.game = run.fields.display_name || undefined;
-          runData.system = run.fields.console || undefined;
-          runData.release = run.fields.release_year?.toString() ?? undefined;
-          runData.category = run.fields.category || undefined;
-          runData.estimate = run.fields.run_time;
-          runData.estimateS = durationToSeconds(run.fields.run_time);
-          runData.setupTime = run.fields.setup_time;
-          runData.setupTimeS = durationToSeconds(run.fields.setup_time);
-          runData.gameTwitch = run.fields.twitch_name;
-          runData.scheduled = run.fields.starttime;
-          runData.scheduledS = Math.floor(Date.parse(run.fields.starttime) / 1000) + runData.setupTimeS + runData.estimateS;
-          runData.teams = run.fields.runners.map(runnerId => {
+          runData.game = run.display_name || undefined;
+          runData.system = run.console || undefined;
+          runData.release = run.release_year?.toString() ?? undefined;
+          runData.category = run.category || undefined;
+          runData.estimate = run.run_time;
+          runData.estimateS = durationToSeconds(run.run_time);
+          runData.setupTime = run.setup_time;
+          runData.setupTimeS = durationToSeconds(run.setup_time);
+          runData.gameTwitch = run.twitch_name;
+          runData.scheduled = run.starttime;
+          runData.scheduledS = Math.floor(Date.parse(run.starttime) / 1000) + runData.setupTimeS + runData.estimateS;
+          runData.teams = run.runners.map(({ id: runnerId }, index) => {
             const team = {
               id: uuid(),
+              name: `Team ${index + 1}`,
               players: [],
             };
 
-            const runnerData = runners.find(({ pk }) => pk === runnerId);
+            const runnerData = runners.find(({ id }) => id === runnerId);
             
             if (!runnerData) {
               nodecg.log.warn(`[GDQ Tracker Import] No runner data found for the runner with ID ${runnerId}.`);
@@ -86,18 +100,24 @@ module.exports = nodecg => {
 
             const runner = {
               id: uuid(),
-              name: runnerData.fields.name,
+              name: runnerData.name,
               teamID: team.id,
               social: {
-                twitch: runnerData.fields.stream ? runnerData.fields.stream.replace('http://twitch.tv/', '').replace('https://twitch.tv/', '').replace('twitch.tv/', '') : undefined,
+                twitch: runnerData.stream ? runnerData.stream.replace('http://twitch.tv/', '').replace('https://twitch.tv/', '').replace('twitch.tv/', '') : undefined,
               },
-              pronouns: runnerData.fields.pronouns || undefined,
+              pronouns: runnerData.pronouns || undefined,
               customData: {},
             };
 
             team.players.push(runner);
 
             return team;
+          });
+
+          runData.teams.push({
+            id: uuid(),
+            name: 'Commentators',
+            players: [],
           });
 
           return runData;
