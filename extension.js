@@ -83,6 +83,28 @@ module.exports = nodecg => {
           runData.gameTwitch = run.twitch_name;
           runData.scheduled = run.starttime;
           runData.scheduledS = Math.floor(Date.parse(run.starttime) / 1000) + runData.setupTimeS + runData.estimateS;
+          
+          function buildTalentRecord(talentId, teamId) {
+            const talentData = runners.find(({ id }) => id === talentId);
+              
+            if (!talentData) {
+              nodecg.log.warn(`[GDQ Tracker Import] No talent data found for the talent with ID ${talentId}.`);
+
+              return null;
+            }
+
+            return {
+              id: uuid(),
+              name: talentData.name,
+              teamID: teamId,
+              social: {
+                twitch: talentData.stream ? talentData.stream.replace('http://twitch.tv/', '').replace('https://twitch.tv/', '').replace('twitch.tv/', '') : undefined,
+              },
+              pronouns: talentData.pronouns || undefined,
+              customData: {},
+            };
+          }
+
           runData.teams = run.runners.map(({ id: runnerId }, index) => {
             const team = {
               id: uuid(),
@@ -90,35 +112,39 @@ module.exports = nodecg => {
               players: [],
             };
 
-            const runnerData = runners.find(({ id }) => id === runnerId);
-            
-            if (!runnerData) {
-              nodecg.log.warn(`[GDQ Tracker Import] No runner data found for the runner with ID ${runnerId}.`);
-
-              return team;
-            }
-
-            const runner = {
-              id: uuid(),
-              name: runnerData.name,
-              teamID: team.id,
-              social: {
-                twitch: runnerData.stream ? runnerData.stream.replace('http://twitch.tv/', '').replace('https://twitch.tv/', '').replace('twitch.tv/', '') : undefined,
-              },
-              pronouns: runnerData.pronouns || undefined,
-              customData: {},
-            };
-
-            team.players.push(runner);
+            const talentRecord = buildTalentRecord(runnerId, team.id);
+            if (talentRecord) team.players.push(talentRecord);
 
             return team;
           });
 
-          runData.teams.push({
+          const commentatorTeam = {
             id: uuid(),
             name: 'Commentators',
             players: [],
-          });
+          }
+
+          for (const commentator of run.commentators) {
+            const talentRecord = buildTalentRecord(commentator.id, commentatorTeam.id);
+            if (talentRecord) commentatorTeam.players.push(talentRecord);
+          }
+
+          runData.teams.push(commentatorTeam);
+
+          if (nodecg.bundleConfig.includeHosts) {
+            const hostTeam = {
+              id: uuid(),
+              name: 'Hosts',
+              players: [],
+            }
+
+            for (const host of run.hosts) {
+              const talentRecord = buildTalentRecord(host.id, hostTeam.id);
+              if (talentRecord) hostTeam.players.push(talentRecord);
+            }
+
+            runData.teams.push(hostTeam);
+          }
 
           return runData;
         });
