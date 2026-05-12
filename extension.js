@@ -2,10 +2,12 @@ const fetch = require('isomorphic-fetch');
 const { v4: uuid } = require('uuid');
 
 module.exports = nodecg => {
-  async function fetchFromTracker(baseURL, type, eventId) {
-    const normalizedBaseURL = baseURL.endsWith('/') ? baseURL.substr(0, baseURL.length - 1) : baseURL;
-
-    const request = await fetch(`${normalizedBaseURL}/api/v2/events/${eventId}/${type}.json`);
+  async function fetchFromTracker(path) {
+    const request = await fetch(path, {
+      header: {
+        'Content-Type': 'application/json',
+      },
+    });
     
     try {
       const response = await request.json();
@@ -21,6 +23,12 @@ module.exports = nodecg => {
 
       return [];
     }
+  }
+
+  async function fetchTrackerResource(baseURL, eventId, resource) {
+    const normalizedBaseURL = baseURL.endsWith('/') ? baseURL.substr(0, baseURL.length - 1) : baseURL;
+    
+    return fetchFromTracker(`${normalizedBaseURL}/api/v2/events/${eventId}/${resource}`);
   }
 
   function durationToSeconds(value) {
@@ -56,8 +64,8 @@ module.exports = nodecg => {
 
     try {
       const [runners, runs] = await Promise.all([
-        fetchFromTracker(trackerURL, 'talent', eventID),
-        fetchFromTracker(trackerURL, 'runs', eventID),
+        fetchTrackerResource(trackerURL, eventID, 'talent'),
+        fetchTrackerResource(trackerURL, eventID, 'runs'),
       ]);
 
       runDataArray.value = runs
